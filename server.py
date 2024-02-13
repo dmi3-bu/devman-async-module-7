@@ -2,10 +2,12 @@ import argparse
 import json
 import logging
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from functools import partial
+from pydantic import ValidationError, NonNegativeFloat
 
 import trio
+from pydantic.dataclasses import dataclass
 from trio_websocket import ConnectionClosed, serve_websocket
 
 RESPONSE_INTERVAL = 1
@@ -18,16 +20,16 @@ buses = {}
 class Bus:
     busId: str
     route: str
-    lat: float
-    lng: float
+    lat: NonNegativeFloat
+    lng: NonNegativeFloat
 
 
 @dataclass
 class WindowBounds:
-    south_lat: float = INIT_BOUNDS_COORD
-    north_lat: float = INIT_BOUNDS_COORD
-    west_lng: float = INIT_BOUNDS_COORD
-    east_lng: float = INIT_BOUNDS_COORD
+    south_lat: NonNegativeFloat
+    north_lat: NonNegativeFloat
+    west_lng: NonNegativeFloat
+    east_lng: NonNegativeFloat
 
     def update(self, south_lat, north_lat, west_lng, east_lng):
         self.south_lat = south_lat
@@ -42,7 +44,7 @@ class WindowBounds:
         return False
 
 
-async def bus_server(request):
+async def serve_buses(request):
     try:
         ws = await request.accept()
         while True:
@@ -52,15 +54,15 @@ async def bus_server(request):
                 await ws.send_message(error_msg)
                 continue
 
-            buses[result["busId"]] = Bus(**result)
+            buses[result.busId] = result
     except ConnectionClosed:
         pass
 
 
-async def browser_server(request):
+async def serve_browsers(request):
     try:
         ws = await request.accept()
-        bounds = WindowBounds()
+        bounds = WindowBounds(INIT_BOUNDS_COORD, INIT_BOUNDS_COORD, INIT_BOUNDS_COORD, INIT_BOUNDS_COORD)
         async with trio.open_nursery() as nursery:
             nursery.start_soon(talk_to_browser, ws, bounds)
             nursery.start_soon(listen_browser, ws, bounds)
@@ -83,47 +85,33 @@ async def listen_browser(ws, bounds):
             await ws.send_message(error_msg)
             continue
 
-        bounds.update(**result['data'])
+        bounds.update(result.south_lat, result.north_lat, result.west_lng, result.east_lng)
 
 
 def validate_bounds_data(message):
     try:
-        new_bounds = json.loads(message)
+        new_bounds_fields = json.loads(message)
     except json.decoder.JSONDecodeError:
         return None, '{"errors": ["Requires valid JSON"], "msgType": "Errors"}'
 
-    if new_bounds.get('msgType') != 'newBounds':
-        return None, '{"errors": ["Requires msgType specified"], "msgType": "Errors"}'
-
-    if type(new_bounds.get('data')) is not dict:
-        return None, '{"errors": ["Requires data specified"], "msgType": "Errors"}'
-
-    if set(new_bounds['data'].keys()) != {'south_lat', 'north_lat', 'west_lng', 'east_lng'}:
-        return None, '{"errors": ["Requires lat and lng specified"], "msgType": "Errors"}'
-
-    if any(map(lambda x: type(x) is not float, new_bounds['data'].values())):
-        return None, '{"errors": ["Requires lat and lng specified as floats"], "msgType": "Errors"}'
+    try:
+        new_bounds = WindowBounds(**new_bounds_fields.get('data', {}))
+    except ValidationError as e:
+        return None, str({"errors": e.errors(), "msgType": "Errors"})
 
     return new_bounds, None
 
 
 def validate_bus_data(message):
     try:
-        new_bus = json.loads(message)
+        new_bus_fields = json.loads(message)
     except json.decoder.JSONDecodeError:
         return None, '{"errors": ["Requires valid JSON"], "msgType": "Errors"}'
 
-    if type(new_bus.get('busId')) != str:
-        return None, '{"errors": ["Requires busId specified as string"], "msgType": "Errors"}'
-
-    if type(new_bus.get('route')) != str:
-        return None, '{"errors": ["Requires route specified as string"], "msgType": "Errors"}'
-
-    if type(new_bus.get('lat')) != float:
-        return None, '{"errors": ["Requires lat specified as float"], "msgType": "Errors"}'
-
-    if type(new_bus.get('lng')) != float:
-        return None, '{"errors": ["Requires lng specified as float"], "msgType": "Errors"}'
+    try:
+        new_bus = Bus(**new_bus_fields)
+    except ValidationError as e:
+        return None, str({"errors": e.errors(), "msgType": "Errors"})
 
     return new_bus, None
 
@@ -158,8 +146,8 @@ def prepare_args():
 async def main():
     async with trio.open_nursery() as nursery:
         serve_ws = partial(serve_websocket, ssl_context=None)
-        nursery.start_soon(serve_ws, bus_server, '127.0.0.1', args.bus_port)
-        nursery.start_soon(serve_ws, browser_server, '127.0.0.1', args.browser_port)
+        nursery.start_soon(serve_ws, serve_buses, '127.0.0.1', args.bus_port)
+        nursery.start_soon(serve_ws, serve_browsers, '127.0.0.1', args.browser_port)
 
 
 if __name__ == '__main__':

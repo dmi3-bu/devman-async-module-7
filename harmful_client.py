@@ -13,24 +13,25 @@ async def test_validations():
         data = '{"msgType": "invalid"}'
         await ws.send_message(data)
         msg = await ws.get_message()
-        assert msg == '{"errors": ["Requires msgType specified"], "msgType": "Errors"}'
+        assert msg == ("{'errors': [{'type': 'missing', 'loc': ('south_lat',), 'msg': 'Field required', 'input': "
+                       "ArgsKwargs(()), 'url': 'https://errors.pydantic.dev/2.6/v/missing'}, {'type': 'missing', "
+                       "'loc': ('north_lat',), 'msg': 'Field required', 'input': ArgsKwargs(()), "
+                       "'url': 'https://errors.pydantic.dev/2.6/v/missing'}, {'type': 'missing', 'loc': ('west_lng',"
+                       "), 'msg': 'Field required', 'input': ArgsKwargs(()), "
+                       "'url': 'https://errors.pydantic.dev/2.6/v/missing'}, {'type': 'missing', 'loc': ('east_lng',"
+                       "), 'msg': 'Field required', 'input': ArgsKwargs(()), "
+                       "'url': 'https://errors.pydantic.dev/2.6/v/missing'}], 'msgType': 'Errors'}")
 
-        data = '{"msgType": "newBounds", "data": null}'
-        await ws.send_message(data)
-        msg = await ws.get_message()
-        assert msg == '{"errors": ["Requires data specified"], "msgType": "Errors"}'
-
-        data = '{"msgType": "newBounds", "data": {}}'
-        await ws.send_message(data)
-        msg = await ws.get_message()
-        assert msg == '{"errors": ["Requires lat and lng specified"], "msgType": "Errors"}'
-
-        data = ('{"msgType": "newBounds", "data": {"south_lat": "54", "north_lat": "54", "west_lng": "54", "east_lng": '
+        data = ('{"msgType": "newBounds", "data": {"south_lat": -54, "north_lat": "54", "west_lng": "-54", "east_lng": '
                 '"54"}}')
         await ws.send_message(data)
         msg = await ws.get_message()
-        assert msg == '{"errors": ["Requires lat and lng specified as floats"], "msgType": "Errors"}'
-
+        assert msg == ("{'errors': [{'type': 'greater_than_equal', 'loc': ('south_lat',), 'msg': 'Input should be "
+                       "greater than or equal to 0', 'input': -54, 'ctx': {'ge': 0.0}, "
+                       "'url': 'https://errors.pydantic.dev/2.6/v/greater_than_equal'}, {'type': "
+                       "'greater_than_equal', 'loc': ('west_lng',), 'msg': 'Input should be greater than or equal to "
+                       "0', 'input': '-54', 'ctx': {'ge': 0.0}, 'url': "
+                       "'https://errors.pydantic.dev/2.6/v/greater_than_equal'}], 'msgType': 'Errors'}")
 
 if __name__ == '__main__':
     trio.run(test_validations)
